@@ -164,6 +164,16 @@ const SWIPE_MIN_THRESHOLD = 60;
  */
 const MERGE_HOLD_MS = 650;
 
+/*
+ * 从打开的文件夹里把成员往外拖，需要按住多久才起拖。
+ *
+ * 非编辑态要留 500ms：那时轻点的含义是「打开这个 App」，按短了会把点按吃掉。
+ * 已经在编辑态里就不必等 —— 图标都在抖了，没人指望轻点能打开 App，iOS 在这个
+ * 状态下也是按下即拖。留 150ms 只为区分「点一下」和「按住拖」。
+ */
+const FOLDER_DRAG_PRESS_MS = 500;
+const FOLDER_DRAG_PRESS_EDIT_MS = 150;
+
 function parseColorAlpha(value: string): { hex: string; alpha: number } {
   const rgbaMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/);
   if (rgbaMatch) {
@@ -2767,8 +2777,20 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         clearMergeIntent(drag);
         drag.contactId = best.id;
         // 合并阈值：接触瞬间任一边重叠超过边长的 60%（50% 手感偏灵，容易误判成组）
-        const mergeEdge = Math.min(dragBoxW, targetBoxW) * 0.6;
-        const merge = !isFolderIconId(drag.itemId) && (best.ox > mergeEdge || best.oy > mergeEdge);
+        /*
+         * 合并阈值：重叠「面积」要超过图标盒的一半多，才算真的压在人家身上。
+         *
+         * 原来写的是 (ox > edge || oy > edge)，两个轴取或 —— 这在同行或同列的
+         * 相邻图标之间必然成立：同一行的两个图标垂直方向天生就是完全重叠的，
+         * 横着推过去 oy 一接触就远超阈值，于是永远判成合并，换位根本做不到。
+         * 同列上下推同理（ox 恒满）。这不是阈值调得不对，是条件本身写错了。
+         *
+         * 改成面积占比后，横推需要真的盖住对方半个身位才会成组，斜切、擦边
+         * 一律走换位 —— 和 iOS 一致：要建文件夹就得明确压上去。
+         */
+        const boxSide = Math.min(dragBoxW, targetBoxW);
+        const overlapRatio = best.area / (boxSide * boxSide);
+        const merge = !isFolderIconId(drag.itemId) && overlapRatio > 0.55;
         drag.contactIntent = merge ? "merge" : "swap";
         if (merge) {
           const targetId = best.id;
@@ -3225,7 +3247,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       timer: setTimeout(() => {
         folderPressRef.current = null;
         beginDragOutOfFolder(pointerId, clientX, clientY, iconId, folderId, element);
-      }, 500),
+      }, editMode ? FOLDER_DRAG_PRESS_EDIT_MS : FOLDER_DRAG_PRESS_MS),
       pointerId,
       startX: clientX,
       startY: clientY,
@@ -4459,7 +4481,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                     data-flip-id={`icon:${iconId}`}
                                     className={itemClass}
                                     style={{ gridRow: pos.row, gridColumn: pos.col }}
-                                    onClick={() => { if (!editMode) { setFolderPageIndex(0); setOpenFolderId(iconId); } }}
+                                    /* 编辑态下也能点开 —— 不然想把成员拖回主屏，
+                                       得先退出编辑态、点开文件夹、再长按里面的图标
+                                       让它自动重进编辑态，路径绕得没道理。iOS 在
+                                       抖动状态下同样可以点开文件夹往外拖。 */
+                                    onClick={() => { setFolderPageIndex(0); setOpenFolderId(iconId); }}
                                     onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, pageKey)}
                                   >
                                     <span className="icon-glyph-box folder-glyph-box" aria-hidden>

@@ -1254,19 +1254,16 @@
    时长由 --merge-hold 传入（见 desktop-shell.tsx 的 MERGE_HOLD_MS）。 */
 .icon-item.merge-charging .icon-glyph-box {
   animation: icon-merge-charge var(--merge-hold, 650ms) cubic-bezier(0.32, 0.06, 0.4, 1) both;
+  /* 提前提交到合成层，缩放过程不再逐帧触发布局 */
+  will-change: transform;
 }
 
+/* 只动 transform。上一版这里还逐帧插值 box-shadow —— 阴影是绘制属性，
+   每一帧都要重新光栅化，在手机上必卡。张开的动作本身已经说明问题了，
+   外圈交给武装态（.merge-target）一次性过渡，那是一次性的，不逐帧。 */
 @keyframes icon-merge-charge {
-  from {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-desktop-icon, #ffffff) 0%, transparent);
-  }
-  to {
-    transform: scale(1.1);
-    box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--c-desktop-icon, #ffffff) 42%, transparent),
-      0 5px 18px rgba(0, 0, 0, 0.2);
-  }
+  from { transform: scale(1); }
+  to { transform: scale(1.1); }
 }
 
 .edit-mode .icon-item.merge-charging {
