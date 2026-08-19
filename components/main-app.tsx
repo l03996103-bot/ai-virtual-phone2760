@@ -8,6 +8,7 @@ import { MediaMaintenanceScheduler } from "@/components/media-maintenance-schedu
 import { DesktopShell } from "./desktop-shell";
 import { SplashAnimation, SPLASH_WATCHDOG_MS } from "./splash-animation";
 import { MusicProvider } from "@/lib/music-context";
+import { releaseBootBackground } from "@/lib/boot-background";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
 import { resolveActiveIconSkins, type ThemeProfile } from "@/lib/theme-types";
@@ -250,7 +251,7 @@ export function MainApp() {
    */
   useEffect(() => {
     if (!splashDismissed) return;
-    document.documentElement.classList.remove("booting");
+    releaseBootBackground();
   }, [splashDismissed]);
 
   useEffect(() => {
