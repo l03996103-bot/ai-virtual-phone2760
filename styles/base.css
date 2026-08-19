@@ -71,51 +71,12 @@ a {
 .splash-phone-screen {
   padding: 0;
   background: #000;
+  /* 整块屏幕都能点 —— 点一下提前跳过开屏 */
+  cursor: pointer;
 }
 
 .splash-phone-screen::before {
   display: none;
-}
-
-.splash-enter-button {
-  position: absolute;
-  left: 50%;
-  bottom: 36px;
-  z-index: 5;
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  transform: translateX(-50%);
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: rgba(244, 244, 245, 0.1);
-  color: rgba(244, 244, 245, 0.88);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(12px);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.7s ease,
-    transform 0.2s ease;
-}
-
-.splash-enter-button svg {
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.8;
-}
-
-.splash-enter-button-show {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.splash-enter-button:active {
-  transform: translateX(-50%) scale(0.96);
 }
 
 /* ══════════════ 开屏:点刻风星图 ══════════════
@@ -132,32 +93,6 @@ a {
   color: #f4f4f5;
   -webkit-font-smoothing: antialiased;
 }
-
-/* ---------- 四角套准记号 ---------- */
-.splash-reg {
-  position: absolute;
-  z-index: 1;
-  width: 26px;
-  height: 26px;
-  opacity: 0;
-  pointer-events: none;
-  animation: splash-reg-fade 0.8s var(--ease-out) 0.25s both;
-}
-
-.splash-reg::before,
-.splash-reg::after {
-  content: "";
-  position: absolute;
-  background: rgba(244, 244, 245, 0.28);
-}
-
-.splash-reg::before { width: 100%; height: 1px; top: 0; }
-.splash-reg::after { width: 1px; height: 100%; left: 0; }
-
-.splash-reg-tl { top: 26px; left: 26px; }
-.splash-reg-tr { top: 26px; right: 26px; transform: scaleX(-1); }
-.splash-reg-bl { bottom: 26px; left: 26px; transform: scaleY(-1); }
-.splash-reg-br { bottom: 26px; right: 26px; transform: scale(-1); }
 
 /* ---------- 星图 + 字标 ---------- */
 .splash-dot-stage {
@@ -240,15 +175,9 @@ a {
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes splash-reg-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .splash-dot-stage,
   .splash-wordmark b,
-  .splash-reg,
   .splash-dot {
     animation-duration: 0.01ms !important;
   }

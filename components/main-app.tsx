@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight } from "lucide-react";
 
 import { AccountGate } from "@/components/auth/account-gate";
 import { CloudBackupScheduler } from "@/components/cloud-backup-scheduler";
 import { MediaMaintenanceScheduler } from "@/components/media-maintenance-scheduler";
 import { DesktopShell } from "./desktop-shell";
-import { SplashAnimation } from "./splash-animation";
+import { SplashAnimation, SPLASH_DURATION_MS } from "./splash-animation";
 import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
@@ -147,7 +146,7 @@ async function warmBuiltinFonts(shouldStop: () => boolean): Promise<void> {
   await Promise.all(BUILTIN_FONT_LOAD_SPECS.map((spec) => document.fonts.load(spec).catch(() => [])));
 }
 
-function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: () => void }) {
+function SplashScreen({ onSkip }: { onSkip?: () => void }) {
   return (
     <main className="app-root splash-root">
       <section
@@ -156,17 +155,10 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
       >
         <div className="phone-case">
           <div className="phone-frame">
-            <div className="phone-shell splash-phone-screen">
+            {/* 整块屏幕都是跳过热区。用 pointerdown 而不是 click:
+                触摸端不用等 click 的合成延迟，点下去就走。 */}
+            <div className="phone-shell splash-phone-screen" onPointerDown={onSkip}>
               <SplashAnimation />
-              <button
-                type="button"
-                className={ready ? "splash-enter-button splash-enter-button-show" : "splash-enter-button"}
-                onClick={onEnter}
-                disabled={!ready}
-                aria-label="Enter"
-              >
-                <ArrowRight size={18} strokeWidth={1.8} />
-              </button>
             </div>
           </div>
         </div>
@@ -228,6 +220,24 @@ export function MainApp() {
   const [preparedDesktopTheme, setPreparedDesktopTheme] = useState<PreparedDesktopTheme | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [splashDismissed, setSplashDismissed] = useState(false);
+  const [animationDone, setAnimationDone] = useState(false);
+  const [skipRequested, setSkipRequested] = useState(false);
+
+  // 开屏动画的计时，和下面的数据加载并行跑。
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimationDone(true), SPLASH_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  /*
+   * 进桌面的唯一闸门是 hydrated。动画放完和用户点击都只是「想进去」的信号，
+   * 数据没就绪就继续等着 —— 角色卡、聊天记录都在 IndexedDB 里，提前进去会
+   * 拿到空的。正常情况下数据 1~2 秒就好了，所以实际表现就是动画一结束立刻进。
+   */
+  useEffect(() => {
+    if (!hydrated) return;
+    if (animationDone || skipRequested) setSplashDismissed(true);
+  }, [hydrated, animationDone, skipRequested]);
 
   useEffect(() => {
     let cancelled = false;
@@ -277,7 +287,7 @@ export function MainApp() {
   return (
     <AccountGate>
       {!splashDismissed ? (
-        <SplashScreen ready={hydrated} onEnter={() => setSplashDismissed(true)} />
+        <SplashScreen onSkip={() => setSkipRequested(true)} />
       ) : (
         <main className="app-root">
           <MusicProvider>

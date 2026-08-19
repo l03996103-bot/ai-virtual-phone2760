@@ -9,14 +9,21 @@ import { useMemo, type CSSProperties } from "react";
  * 近千颗墨点从画面外侧螺旋飘拢,聚成核与七条星轨,最后浮出 67phone 字标。
  *
  * 移植自 mono-phone 的 BootScreen.vue(Vue 3 → React 19)。原版是盖住整屏的
- * 定时幕布:8.7 秒自动结束、点一下跳过。这里退场交给 MainApp —— 数据就绪后
- * 浮出进入按钮、由用户点击决定,所以定时器、幕布层、documentElement 兜底类
- * 全部不需要,只保留星图本身。
+ * 定时幕布,自带幕布层和 documentElement 兜底类;这里星图只负责画,退场由
+ * MainApp 统一管:动画放完(SPLASH_DURATION_MS)且数据就绪后自动进桌面,
+ * 中途点一下可以提前跳过。
  *
  * 性能上靠"错峰"而不是"少画":每颗点的动画都带 both 填充,延迟未到之前它
  * 停在 opacity:0 的起始态 —— 静止、不产生重绘。延迟摊在 7.4 秒里,任一时刻
  * 真正在动的约 260 颗,一千五百多颗点因此也铺得动。
  */
+
+/*
+ * 整段动画的时长。最后一颗点在 8.21s 落定,字标 7.2s 开始展开、1.5s 走完,
+ * 留到 8.7s 让整幅图完整地看一眼。MainApp 拿这个值决定什么时候自动进桌面,
+ * 所以改动画节奏时这个数要跟着改。
+ */
+export const SPLASH_DURATION_MS = 8700;
 
 const VB = 240; /* viewBox 尺寸,中心 120,120 */
 const C = VB / 2;
@@ -205,12 +212,6 @@ export function SplashAnimation() {
 
   return (
     <div className="splash-animation-stage" aria-hidden>
-      {/* 四角套准记号 —— 纯黑底上唯一的背景元素 */}
-      <div className="splash-reg splash-reg-tl" />
-      <div className="splash-reg splash-reg-tr" />
-      <div className="splash-reg splash-reg-bl" />
-      <div className="splash-reg splash-reg-br" />
-
       <div className="splash-dot-stage">
         {/* 每颗点从外侧飘进来落到位;核先聚拢,七条轨道随后依次绕着铺开 */}
         <svg className="splash-dot-chart" viewBox={`0 0 ${VB} ${VB}`}>
