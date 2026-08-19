@@ -174,6 +174,10 @@ const MERGE_HOLD_MS = 650;
 const FOLDER_DRAG_PRESS_MS = 500;
 const FOLDER_DRAG_PRESS_EDIT_MS = 150;
 
+/* 文件夹面板淡出时长。要和 styles/phone-shell.css 里 .folder-overlay.closing
+   的动画时长一致 —— 卸载早于动画播完就会看到硬切。 */
+const FOLDER_CLOSE_MS = 200;
+
 function parseColorAlpha(value: string): { hex: string; alpha: number } {
   const rgbaMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/);
   if (rgbaMatch) {
@@ -1080,6 +1084,13 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   // 桌面文件夹：tile 在 layout 里占格子，这张表管名字和成员
   const [folders, setFolders] = useState<DesktopFolderMap>({});
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  /* 面板退场中：保持挂载、播完淡出再卸载。原来 setOpenFolderId(null) 是硬切，
+     从文件夹往外拖的那一下尤其突兀 —— 面板凭空消失，图标像是闪现到手指上的。 */
+  const [folderClosing, setFolderClosing] = useState(false);
+  const folderCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (folderCloseTimerRef.current) clearTimeout(folderCloseTimerRef.current);
+  }, []);
   const [folderPageIndex, setFolderPageIndex] = useState(0);
   // 拖拽悬停到某图标中心足够久 → 该图标高亮为“松手成组”目标
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
@@ -1256,6 +1267,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
         if (el.dataset.flipActive) {
           el.style.transition = "none";
           el.style.transform = "";
+          el.style.willChange = "";
           delete el.dataset.flipActive;
           el.removeAttribute("data-flip-active");
         }
@@ -1280,6 +1292,9 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       if (item.el.classList.contains("dragging") || item.el.closest(".dragging")) continue;
       item.el.style.transition = "none";
       item.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      // 提前提交合成层：让位是一堆图标同时滑动，不提示的话每个都可能在
+      // 动画第一帧才被提层，那一帧就是肉眼可见的顿挫
+      item.el.style.willChange = "transform";
       item.el.dataset.flipActive = "1";
       item.el.setAttribute("data-flip-active", "1");
       moved.push(item.el);
@@ -1294,6 +1309,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       window.setTimeout(() => {
         for (const el of moved) {
           el.style.transition = "";
+          // 动画结束就撤掉合成层提示 —— 留着不撤等于常驻一堆图层，白占内存
+          el.style.willChange = "";
           delete el.dataset.flipActive;
           el.removeAttribute("data-flip-active");
         }
@@ -3277,21 +3294,59 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
   ) {
     const folder = foldersRef.current[folderId];
     if (!folder || !folder.icons.includes(iconId)) return;
-    setEditMode(true);
     try { navigator.vibrate?.(30); } catch { /* 不支持就算了 */ }
     const activePageKeys = getDesktopPageKeysForState(layoutRef.current, widgetsRef.current);
     const pageKey = activePageKeys[Math.min(currentPageIndexRef.current, activePageKeys.length - 1)] ?? "page1";
+
+    /*
+     * 分两帧做，这是从文件夹往外拖能不能跟手的关键。
+     *
+     * 原来这四件事挤在同一帧：开编辑态（二三十个图标同时起抖动）、摘成员
+     * （文件夹重排）、卸载面板（掉一层 backdrop-filter: blur(18px)）、建 ghost
+     * （克隆节点）。而这一帧正好是手指刚开始移动那一下 —— 必然掉帧，观感就是
+     * 图标"粘"了一下才跟上来。
+     *
+     * 现在第一帧只做「把图标接到手指上」+ 面板开始淡出，手感立刻连上；
+     * 剩下的重活推到下一帧，用户注意力已经在跟着 ghost 走，察觉不到。
+     */
     // sourcePage 挂在当前页上只是占位；fromOutside 逻辑靠 sourceFolderId 分流
     startDragPending(pointerId, x, y, "icon", iconId, pageKey, element);
     const drag = editDragRef.current;
     if (!drag) return;
     drag.sourceFolderId = folderId;
-    setFolders(current => ({
-      ...current,
-      [folderId]: { ...current[folderId], icons: current[folderId].icons.filter(id => id !== iconId) },
-    }));
-    setOpenFolderId(null);
     activateDragAt(pointerId, x, y);
+    closeFolder();
+
+    requestAnimationFrame(() => {
+      setEditMode(true);
+      setFolders(current => {
+        const live = current[folderId];
+        if (!live) return current;
+        return { ...current, [folderId]: { ...live, icons: live.icons.filter(id => id !== iconId) } };
+      });
+    });
+  }
+
+  /* 打开面板。若上一次的淡出还没走完，先撤掉计时器，避免刚开又被关掉。 */
+  function openFolder(folderId: string) {
+    if (folderCloseTimerRef.current) {
+      clearTimeout(folderCloseTimerRef.current);
+      folderCloseTimerRef.current = null;
+    }
+    setFolderClosing(false);
+    setFolderPageIndex(0);
+    setOpenFolderId(folderId);
+  }
+
+  /* 关闭面板：先挂 closing 播淡出，播完再真正卸载。 */
+  function closeFolder() {
+    if (folderCloseTimerRef.current) return; // 已在退场，别重复排队
+    setFolderClosing(true);
+    folderCloseTimerRef.current = setTimeout(() => {
+      folderCloseTimerRef.current = null;
+      setFolderClosing(false);
+      setOpenFolderId(null);
+    }, FOLDER_CLOSE_MS);
   }
 
   function renameFolder(folderId: string, name: string) {
@@ -4485,7 +4540,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                        得先退出编辑态、点开文件夹、再长按里面的图标
                                        让它自动重进编辑态，路径绕得没道理。iOS 在
                                        抖动状态下同样可以点开文件夹往外拖。 */
-                                    onClick={() => { setFolderPageIndex(0); setOpenFolderId(iconId); }}
+                                    onClick={() => openFolder(iconId)}
                                     onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, pageKey)}
                                   >
                                     <span className="icon-glyph-box folder-glyph-box" aria-hidden>
@@ -4823,7 +4878,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                 if (memberPages.length === 0) memberPages.push([]);
                 const boundedFolderPage = Math.min(folderPageIndex, memberPages.length - 1);
                 return (
-                  <div className="folder-overlay" onClick={() => setOpenFolderId(null)}>
+                  <div
+                    className={folderClosing ? "folder-overlay closing" : "folder-overlay"}
+                    onClick={closeFolder}
+                  >
                     <input
                       key={openFolderId}
                       className="folder-name-input"
