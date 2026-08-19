@@ -1,7 +1,7 @@
 {
-    "name": "float",
-    "short_name": "float",
-    "description": "float",
+    "name": "67phone",
+    "short_name": "67phone",
+    "description": "AI 虚拟互动手机",
     "id": "/",
     "start_url": "/",
     "scope": "/",

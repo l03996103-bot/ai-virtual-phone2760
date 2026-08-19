@@ -1,569 +1,242 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useMemo, type CSSProperties } from "react";
 
-const SCRIPT = [
-  { side: "right", text: "you ever zone out mid-toast?", start: 80, type: 0 },
-  { side: "left", text: "the bread became a small sunset.", start: 560, type: 310 },
-  { side: "right", text: "beautiful. also concerning.", start: 1540, type: 0 },
-  { side: "left", text: "let it float until it remembers.", start: 2140, type: 340 }
-] as const;
+/*
+ * 开屏动画 —— 点刻风星图。
+ *
+ * 参考点刻(dotwork)纹身:线不是连续的描边,而是一颗颗墨点排出来的。
+ * 近千颗墨点从画面外侧螺旋飘拢,聚成核与七条星轨,最后浮出 67phone 字标。
+ *
+ * 移植自 mono-phone 的 BootScreen.vue(Vue 3 → React 19)。原版是盖住整屏的
+ * 定时幕布:8.7 秒自动结束、点一下跳过。这里退场交给 MainApp —— 数据就绪后
+ * 浮出进入按钮、由用户点击决定,所以定时器、幕布层、documentElement 兜底类
+ * 全部不需要,只保留星图本身。
+ *
+ * 性能上靠"错峰"而不是"少画":每颗点的动画都带 both 填充,延迟未到之前它
+ * 停在 opacity:0 的起始态 —— 静止、不产生重绘。延迟摊在 7.4 秒里,任一时刻
+ * 真正在动的约 260 颗,一千五百多颗点因此也铺得动。
+ */
 
-const T = {
-  detach: 3480,
-  morph: 3630,
-  rise: 3840,
-  titleStart: 7520,
-  tagline: 8520
+const VB = 240; /* viewBox 尺寸,中心 120,120 */
+const C = VB / 2;
+
+type Orbit = {
+  rx: number;
+  ry: number;
+  rot: number;
+  ox: number;
+  oy: number;
+  n: number;
+  delay: number;
+  dur: number;
+  op: number;
+  rmin: number;
+  rvar: number;
 };
 
-const KLEIN = "#174BFF";
-const KLEIN_DEEP = "#0B2ED8";
-const PAPER = "#F1F2F6";
-const INK = "#1A1A1A";
-const FONT_UI = "\"Inter\", -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", sans-serif";
-const FONT_SERIF = "\"Instrument Serif\", Georgia, \"Times New Roman\", serif";
-const FONT_MONO = "\"JetBrains Mono\", ui-monospace, monospace";
+/*
+ * 对着点刻纹身参考调出来的一组:
+ *  - 椭圆开一些(约 2.4:1),太细会把整幅图收成一条窄带
+ *  - 圆心各自错开几个单位 —— 全部同心会显得像标准件
+ *  - 两条重墨只差 5° 挨在一起,是参考图最醒目的特征:两端聚拢、中段分开
+ *  - 一条向另一侧倾,把扇面拉开
+ */
+const ORBITS: Orbit[] = [
+  { rx: 112, ry: 46, rot: -20, ox: 3, oy: -4, n: 160, delay: 0.40, dur: 3.0, op: 0.5, rmin: 0.18, rvar: 0.16 },
+  { rx: 102, ry: 40, rot: -36, ox: -6, oy: 3, n: 150, delay: 1.08, dur: 3.0, op: 0.4, rmin: 0.18, rvar: 0.15 },
+  { rx: 96, ry: 36, rot: -52, ox: 3, oy: 4, n: 230, delay: 1.76, dur: 3.0, op: 1.0, rmin: 0.3, rvar: 0.26 },
+  { rx: 91, ry: 31, rot: -47, ox: 1, oy: 2, n: 215, delay: 2.44, dur: 3.0, op: 0.9, rmin: 0.28, rvar: 0.24 },
+  { rx: 84, ry: 27, rot: -70, ox: -2, oy: -2, n: 160, delay: 3.12, dur: 3.0, op: 0.62, rmin: 0.22, rvar: 0.18 },
+  { rx: 88, ry: 33, rot: 10, ox: 6, oy: 1, n: 150, delay: 3.80, dur: 3.0, op: 0.36, rmin: 0.18, rvar: 0.15 },
+  { rx: 60, ry: 24, rot: -32, ox: -3, oy: 3, n: 140, delay: 4.40, dur: 3.0, op: 0.58, rmin: 0.22, rvar: 0.18 },
+];
 
-const clamp = (v: number, a: number, b: number) => v < a ? a : v > b ? b : v;
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const easeOutBack = (x: number) => {
-  const c1 = 1.70158;
-  const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+/* 一颗点:落点 (x,y)、半径 r、亮度 o、入场延迟 d、
+   起点偏移 (dx,dy)、螺旋路径上的两个中途采样点 (m1,m2) */
+type Dot = {
+  x: number;
+  y: number;
+  r: number;
+  o: number;
+  d: number;
+  dx: number;
+  dy: number;
+  m1x: number;
+  m1y: number;
+  m2x: number;
+  m2y: number;
 };
 
-function bounceOut(x: number) {
-  const n1 = 7.5625;
-  const d1 = 2.75;
-  if (x < 1 / d1) return n1 * x * x;
-  if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
-  if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
-  return n1 * (x -= 2.625 / d1) * x + 0.984375;
-}
+function buildDots(): Dot[] {
+  /* 定死的伪随机 —— 每次开机的点位必须一模一样,不能真随机。
+     seed 收在函数内,StrictMode 下重跑一次结果也完全一致。 */
+  let seed = 0;
+  const rand = () => {
+    seed += 1;
+    const x = Math.sin(seed * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  };
 
-function drawPillPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  r = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
+  const pointOn = (o: Orbit, t: number) => {
+    const r = (o.rot * Math.PI) / 180;
+    const x = o.rx * Math.cos(t);
+    const y = o.ry * Math.sin(t);
+    return {
+      x: C + o.ox + x * Math.cos(r) - y * Math.sin(r),
+      y: C + o.oy + x * Math.sin(r) + y * Math.cos(r),
+    };
+  };
 
-function drawBalloonPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, organic = 0) {
-  const ow = w * (1 + organic * 0.025);
-  const oh = h * (1 - organic * 0.015);
-  const topY = cy - oh * 0.5;
-  const botY = cy + oh * 0.48;
-  ctx.beginPath();
-  ctx.moveTo(cx, topY);
-  ctx.bezierCurveTo(cx + ow * 0.39, topY + oh * 0.015, cx + ow * 0.52, cy - oh * 0.19, cx + ow * 0.49, cy + oh * 0.07);
-  ctx.bezierCurveTo(cx + ow * 0.47, cy + oh * 0.31, cx + ow * 0.27, botY - oh * 0.01, cx + ow * 0.075, botY);
-  ctx.bezierCurveTo(cx + ow * 0.035, botY + oh * 0.015, cx - ow * 0.035, botY + oh * 0.015, cx - ow * 0.075, botY);
-  ctx.bezierCurveTo(cx - ow * 0.28, botY - oh * 0.005, cx - ow * 0.47, cy + oh * 0.31, cx - ow * 0.49, cy + oh * 0.07);
-  ctx.bezierCurveTo(cx - ow * 0.52, cy - oh * 0.19, cx - ow * 0.39, topY + oh * 0.015, cx, topY);
-  ctx.closePath();
+  const makeDot = (
+    x: number,
+    y: number,
+    r: number,
+    o: number,
+    delay: number,
+    push: number,
+    spread: number,
+  ): Dot => {
+    const vx = x - C;
+    const vy = y - C;
+    const len = Math.hypot(vx, vy) || 1;
+    /* 起点沿"由中心指向落点"的方向再往外抛一段,并加一点横向偏移,
+       于是是从外围各个方向飘拢过来,而不是整齐地放大 */
+    const dx = (vx / len) * push + (rand() - 0.5) * spread;
+    const dy = (vy / len) * push + (rand() - 0.5) * spread;
+
+    /*
+     * 两个关键帧之间 transform 是直线插值,所以曲线得靠中间帧采样出来。
+     * 这里按真正的螺旋取样:半径随进度线性收到 0,角度同时旋过 sw。
+     * 取两个中间点(38% / 70%)而不是一个 —— 一个点只能折出一道钝角,
+     * 速度在那里会明显一顿;两个点才拟合得出平滑的弧。
+     */
+    const sw = 0.55 + rand() * 0.4;
+    const spiral = (p: number): [number, number] => {
+      const a = sw * p;
+      const k = 1 - p;
+      return [
+        (dx * Math.cos(a) - dy * Math.sin(a)) * k,
+        (dx * Math.sin(a) + dy * Math.cos(a)) * k,
+      ];
+    };
+    const [m1x, m1y] = spiral(0.38);
+    const [m2x, m2y] = spiral(0.7);
+    return { x, y, r, o, d: delay, dx, dy, m1x, m1y, m2x, m2y };
+  };
+
+  const out: Dot[] = [];
+
+  /* 中心的核:幂次分布把点往里压,越靠内越密越大。
+     入场摊在 2.5 秒里而不是挤在一起 —— SVG 元素的动画走主线程,
+     同时在动的越少越稳,而这段正好和 app 挂载撞在一起。 */
+  for (let i = 0; i < 260; i++) {
+    const a = rand() * Math.PI * 2;
+    const t = rand() ** 2.4;
+    const d = t * 21;
+    out.push(makeDot(
+      C + Math.cos(a) * d,
+      C + Math.sin(a) * d * 0.86,
+      0.26 + (1 - t) * 0.58,
+      0.42 + (1 - t) * 0.58,
+      0.1 + t * 3.0 + rand() * 0.35,
+      26 + rand() * 40,
+      22,
+    ));
+  }
+
+  /* 核外一圈稀薄的晕 —— 让它有个化开的边缘,而不是一刀切的硬边 */
+  for (let i = 0; i < 80; i++) {
+    const a = rand() * Math.PI * 2;
+    const d = 18 + rand() ** 0.7 * 22;
+    out.push(makeDot(
+      C + Math.cos(a) * d,
+      C + Math.sin(a) * d * 0.86,
+      0.18 + rand() * 0.24,
+      0.12 + rand() * 0.28,
+      0.9 + rand() * 2.7,
+      24 + rand() * 40,
+      24,
+    ));
+  }
+
+  /* 七条轨道,每条错开 .55s 依次开始。同一条上的点按角度顺序到位,于是是
+     "绕着描出来"的。沿线的疏密做正弦起伏 —— 参考图里墨色不是均匀的,
+     有几段明显更浓。 */
+  for (const o of ORBITS) {
+    for (let i = 0; i < o.n; i++) {
+      const base = (i / o.n) * Math.PI * 2;
+      /* 抖动按点距缩放:点越密抖动要越小,否则密的线会糊成一条带 */
+      const p = pointOn(o, base + (rand() - 0.5) * (5 / o.n));
+      /* 墨色沿线起伏,浓的地方点也更粗 —— 才像笔压变化,而不是均匀的灰 */
+      const dense = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(base * 2 + o.rot));
+      out.push(makeDot(
+        p.x,
+        p.y,
+        (o.rmin + rand() * o.rvar) * (0.78 + dense * 0.34),
+        o.op * dense,
+        o.delay + (i / o.n) * o.dur + rand() * 0.14,
+        44 + rand() * 78,
+        30,
+      ));
+    }
+  }
+
+  /* 散落在外的几点碎屑 */
+  for (let i = 0; i < 24; i++) {
+    const a = rand() * Math.PI * 2;
+    const d = 66 + rand() * 54;
+    out.push(makeDot(
+      C + Math.cos(a) * d * 1.12,
+      C + Math.sin(a) * d * 0.82,
+      0.22 + rand() * 0.3,
+      0.18 + rand() * 0.4,
+      1.2 + rand() * 3.0,
+      30 + rand() * 46,
+      26,
+    ));
+  }
+
+  return out;
 }
 
 export function SplashAnimation() {
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useLayoutEffect(() => {
-    const stageEl = stageRef.current;
-    const canvasEl = canvasRef.current;
-    const context = canvasEl?.getContext("2d");
-    if (!stageEl || !canvasEl || !context) return;
-    const stage: HTMLDivElement = stageEl;
-    const canvas: HTMLCanvasElement = canvasEl;
-    const ctx: CanvasRenderingContext2D = context;
-    const supportsCanvasFilter = typeof (ctx as CanvasRenderingContext2D & { filter?: string }).filter === "string";
-    const useSoftEdgeFallback =
-      !supportsCanvasFilter ||
-      window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-
-    let W = 0;
-    let H = 0;
-    let raf = 0;
-    let resizeTimer = 0;
-    let startTime = 0;
-    let pausedElapsed = 0;
-    let isAnimating = false;
-    let titleFontSize = 80;
-    const charsSpawnedFor = new Set<Bubble>();
-
-    function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const r = stage.getBoundingClientRect();
-      W = Math.max(1, r.width);
-      H = Math.max(1, r.height);
-      canvas.width = Math.round(W * dpr);
-      canvas.height = Math.round(H * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-
-    class Speck {
-      x = 0;
-      y = 0;
-      r = 1;
-      vy = 0;
-      vx = 0;
-      alpha = 0.2;
-      tone = true;
-      swayP = 0;
-      constructor(initial: boolean) {
-        this.reset(initial);
-      }
-      reset(initial: boolean) {
-        this.x = Math.random() * W;
-        this.y = initial ? Math.random() * H : H + 8;
-        this.r = rand(0.2, 1.5);
-        this.vy = -rand(0.05, 0.32);
-        this.vx = rand(-0.1, 0.1);
-        this.alpha = rand(0.06, 0.32);
-        this.tone = Math.random() < 0.7;
-        this.swayP = Math.random() * Math.PI * 2;
-      }
-      update() {
-        this.swayP += 0.01;
-        this.x += this.vx + Math.sin(this.swayP) * 0.05;
-        this.y += this.vy;
-        if (this.y < -10) this.reset(false);
-      }
-      draw() {
-        ctx.fillStyle = this.tone ? `rgba(23,75,255,${this.alpha})` : `rgba(40,40,40,${this.alpha * 0.65})`;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    class Bubble {
-      side: "left" | "right";
-      text: string;
-      idx: number;
-      fontSize: number;
-      padX: number;
-      textW: number;
-      w: number;
-      h: number;
-      textColor: string;
-      detachColor: string;
-      chatBaseY: number;
-      yStep: number;
-      ay: number;
-      ax: number;
-      balloonCenterX: number;
-      balloonScale: number;
-      scale = 0;
-      morph = 0;
-      driftX = 0;
-      driftY = 0;
-      swayPhase: number;
-      charsOut = false;
-      textReveal = 0;
-      showTyping = false;
-      showText = false;
-      config: typeof SCRIPT[number];
-      constructor(config: typeof SCRIPT[number], idx: number) {
-        this.side = config.side;
-        this.text = config.text;
-        this.idx = idx;
-        this.config = config;
-        this.fontSize = Math.max(13, Math.min(16, W * 0.042));
-        this.padX = this.fontSize * 0.86;
-        const padY = this.fontSize * 0.52;
-        this.textColor = this.side === "left" ? INK : "#FFFFFF";
-        this.detachColor = this.side === "left" ? INK : KLEIN_DEEP;
-        ctx.font = `300 ${this.fontSize}px ${FONT_UI}`;
-        this.textW = ctx.measureText(this.text).width;
-        this.w = this.textW + this.padX * 2;
-        this.h = this.fontSize * 1.7 + padY * 0.4;
-        const margin = W * 0.07;
-        this.chatBaseY = H * 0.61;
-        this.yStep = H * 0.072;
-        this.ay = this.chatBaseY;
-        this.ax = this.side === "left" ? margin : W - margin - this.w;
-        const sideIndex = Math.floor(idx / 2);
-        const leftFloatSlots = [0.42, 0.25, 0.44, 0.27];
-        const rightFloatSlots = [0.58, 0.75, 0.56, 0.73];
-        const balloonScales = [0.78, 0.67, 0.86, 0.72, 0.64, 0.82, 0.7, 0.76];
-        this.balloonCenterX = W * (this.side === "left" ? leftFloatSlots[sideIndex % leftFloatSlots.length] : rightFloatSlots[sideIndex % rightFloatSlots.length]);
-        this.balloonScale = balloonScales[idx % balloonScales.length];
-        this.swayPhase = idx * 0.7;
-      }
-      update(t: number, visibleCount: number) {
-        const at = this.config.start;
-        if (t < at) {
-          this.ay = this.chatBaseY;
-        } else {
-          const targetRow = this.idx - Math.max(0, visibleCount - 1);
-          this.ay = lerp(this.ay, this.chatBaseY + targetRow * this.yStep, 0.16);
-        }
-        this.scale = t < at ? 0 : easeOutBack(clamp((t - at) / 440, 0, 1));
-        if (this.scale > 0) {
-          if (this.config.type > 0 && t < at + this.config.type) {
-            this.showTyping = true;
-            this.showText = false;
-            this.textReveal = 0;
-          } else {
-            this.showTyping = false;
-            this.showText = true;
-            const revealDur = Math.max(this.config.type > 0 ? 360 : 220, this.text.length * (this.config.type > 0 ? 32 : 26));
-            this.textReveal = clamp((t - at - this.config.type) / revealDur, 0, 1);
-          }
-        }
-        this.morph = t > T.morph ? clamp((t - T.morph) / 720, 0, 1) : 0;
-        if (t > T.rise) {
-          const dt = (t - T.rise) / 1000;
-          this.driftY = -dt * (70 + this.idx * 4) - Math.pow(dt, 1.4) * 16;
-          this.swayPhase += 0.026;
-          this.driftX = Math.sin(this.swayPhase + this.idx) * (9 + this.idx * 1.5);
-        }
-      }
-      draw(t: number) {
-        if (this.scale <= 0.001) return;
-        const baseCx = this.ax + this.w / 2;
-        const cx = lerp(baseCx, this.balloonCenterX + this.driftX, this.morph);
-        const cy = this.ay + this.h / 2 + this.driftY;
-        const m = this.morph;
-        const squish = m > 0 ? 1 - 0.12 * Math.sin(m * Math.PI) : 1;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(this.scale * squish, this.scale * squish);
-        const target = Math.max(this.w, this.h);
-        const sw = lerp(this.w, target * 0.46 * this.balloonScale, m);
-        const sh = lerp(this.h, target * 0.62 * this.balloonScale, m);
-        const radius = lerp(this.h / 2, Math.min(sw, sh) * 0.46, m);
-        const softEdge = Math.pow(1 - clamp(m / 0.72, 0, 1), 1.8);
-        if (softEdge > 0.01) {
-          ctx.shadowColor = this.side === "left" ? `rgba(255,255,255,${0.68 * softEdge})` : `rgba(26,60,240,${0.24 * softEdge})`;
-          ctx.shadowBlur = this.side === "left" ? 10 * softEdge : 14 * softEdge;
-        }
-        const drawBubbleShape = () => {
-          if (m < 0.985) drawPillPath(ctx, -sw / 2, -sh / 2, sw, sh, radius);
-          else drawBalloonPath(ctx, 0, 0, sw, sh, Math.sin(this.swayPhase + this.idx));
-        };
-        const drawExpandedBubbleShape = (expand: number) => {
-          if (m < 0.985) {
-            drawPillPath(ctx, -sw / 2 - expand, -sh / 2 - expand, sw + expand * 2, sh + expand * 2, radius + expand);
-          } else {
-            drawBalloonPath(ctx, 0, 0, sw + expand * 2, sh + expand * 2, Math.sin(this.swayPhase + this.idx));
-          }
-        };
-        const fillColor = this.side === "right" ? KLEIN : "#FFFFFF";
-        ctx.fillStyle = fillColor;
-        const edgeBlur = 2.4 * softEdge;
-        if (edgeBlur > 0.06 && useSoftEdgeFallback) {
-          ctx.shadowColor = "transparent";
-          const blurSize = Math.max(1.2, edgeBlur * 1.35);
-          const passes = [
-            { expand: blurSize * 2.2, alpha: 0.07 },
-            { expand: blurSize * 1.55, alpha: 0.12 },
-            { expand: blurSize * 0.95, alpha: 0.20 },
-            { expand: blurSize * 0.42, alpha: 0.34 },
-            { expand: 0, alpha: 0.58 }
-          ];
-          ctx.save();
-          for (const pass of passes) {
-            ctx.globalAlpha = pass.alpha;
-            drawExpandedBubbleShape(pass.expand);
-            ctx.fill();
-          }
-          ctx.restore();
-        } else {
-          drawBubbleShape();
-          ctx.filter = edgeBlur > 0.06 ? `blur(${edgeBlur}px)` : "none";
-          ctx.fill();
-          ctx.filter = "none";
-        }
-        ctx.shadowColor = "transparent";
-        if (m > 0.3) {
-          ctx.globalAlpha = ((m - 0.3) / 0.7) * (this.side === "left" ? 0.55 : 0.5);
-          ctx.fillStyle = "#FFFFFF";
-          ctx.beginPath();
-          ctx.ellipse(-sw * 0.23, -sh * 0.31, sw * 0.085, sh * 0.13, 0.48, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        if (m > 0.55) {
-          ctx.globalAlpha = (m - 0.55) / 0.45;
-          ctx.fillStyle = this.side === "right" ? KLEIN_DEEP : "#E8E5DD";
-          ctx.beginPath();
-          const ny = sh / 2;
-          ctx.moveTo(-3.5, ny - 1);
-          ctx.lineTo(3.5, ny - 1);
-          ctx.lineTo(2.2, ny + 4.5);
-          ctx.lineTo(-2.2, ny + 4.5);
-          ctx.closePath();
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        if (m > 0.25) {
-          const sa = (m - 0.25) / 0.75;
-          const len = (108 + this.idx * 6) * sa;
-          const sw1 = Math.sin(this.swayPhase * 1.4) * 9;
-          const sw2 = Math.sin(this.swayPhase * 1.4 + 1) * 7;
-          ctx.strokeStyle = this.side === "left" ? "rgba(120,120,120,0.7)" : "rgba(0,20,168,0.85)";
-          ctx.lineWidth = 0.9;
-          ctx.beginPath();
-          ctx.moveTo(0, sh / 2 + 4);
-          ctx.bezierCurveTo(sw2 * 0.5, sh / 2 + 4 + len * 0.35, sw1 * 0.7, sh / 2 + 4 + len * 0.7, sw1, sh / 2 + 4 + len);
-          ctx.stroke();
-        }
-        if (!this.charsOut) {
-          if (this.showTyping) drawTypingDots(t, this.side === "left" ? "rgba(120,120,120,0.85)" : "rgba(255,255,255,0.85)");
-          else if (this.showText) {
-            ctx.fillStyle = this.textColor;
-            ctx.font = `300 ${this.fontSize}px ${FONT_UI}`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(this.textReveal < 1 ? this.text.slice(0, Math.ceil(this.text.length * this.textReveal)) : this.text, 0, 0);
-          }
-        }
-        ctx.restore();
-      }
-    }
-
-    function drawTypingDots(t: number, color: string) {
-      for (let i = 0; i < 3; i++) {
-        const phase = ((t * 0.0048) + i * 0.22) % 1.1;
-        const wave = Math.sin(phase * Math.PI / 1.1);
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.3 + Math.max(0, wave) * 0.7;
-        ctx.beginPath();
-        ctx.arc((i - 1) * 8, -wave * 1.6, 2.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    class FloatChar {
-      vx = rand(-0.95, 0.95);
-      vy = -rand(0.7, 1.9);
-      rot = rand(-0.18, 0.18);
-      rotV = rand(-0.022, 0.022);
-      alpha = 1;
-      swayPhase = Math.random() * Math.PI * 2;
-      swayAmp = rand(0.18, 0.55);
-      constructor(public ch: string, public x: number, public y: number, public color: string, public size: number) {}
-      update() {
-        this.swayPhase += 0.04;
-        this.x += this.vx + Math.sin(this.swayPhase) * this.swayAmp;
-        this.y += this.vy;
-        this.vy *= 0.991;
-        this.vx *= 0.991;
-        if (this.vy > -0.55) this.vy -= 0.009;
-        this.rot += this.rotV;
-        if (this.y < H * 0.13) this.alpha = clamp(this.y / (H * 0.13), 0, 1);
-      }
-      draw() {
-        if (this.alpha <= 0) return;
-        ctx.save();
-        ctx.globalAlpha = this.alpha;
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.rot);
-        ctx.fillStyle = this.color;
-        ctx.font = `300 ${this.size}px ${FONT_UI}`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(this.ch, 0, 0);
-        ctx.restore();
-      }
-    }
-
-    class TitleLetter {
-      scale = 0;
-      opacity = 0;
-      x: number;
-      y: number;
-      rot = 0;
-      startTime: number;
-      bobPhase: number;
-      constructor(public ch: string, public tx: number, public ty: number, public idx: number, public fontSize: number) {
-        this.x = tx;
-        this.y = ty + 100;
-        this.startTime = T.titleStart + idx * 110;
-        this.bobPhase = idx * 0.7 + Math.random() * 0.3;
-      }
-      update(t: number) {
-        const dt = t - this.startTime;
-        if (dt < 0) {
-          this.opacity = 0;
-          return;
-        }
-        if (dt < 760) {
-          const p = dt / 760;
-          const e = bounceOut(p);
-          this.x = this.tx;
-          this.y = this.ty + (1 - e) * 110;
-          this.scale = e;
-          this.opacity = clamp(p * 1.6, 0, 1);
-          this.rot = (1 - e) * 0.2 * (this.idx % 2 ? 1 : -1);
-        } else {
-          const bt = (dt - 760) / 1000;
-          this.x = this.tx + Math.sin(bt * 1.25 + this.bobPhase) * 1.8;
-          this.y = this.ty + Math.sin(bt * 1.65 + this.bobPhase) * 4;
-          this.scale = 1 + Math.sin(bt * 2 + this.bobPhase) * 0.028;
-          this.rot = Math.sin(bt * 1.4 + this.bobPhase) * 0.03;
-          this.opacity = 1;
-        }
-      }
-      draw() {
-        if (this.opacity <= 0) return;
-        ctx.save();
-        ctx.globalAlpha = this.opacity;
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.rot);
-        ctx.scale(this.scale, this.scale);
-        ctx.font = `italic 400 ${this.fontSize}px ${FONT_SERIF}`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "rgba(23,75,255,0.09)";
-        for (const [dx, dy] of [[-1.6, 0], [1.6, 0], [0, -1.6], [0, 1.6], [-1.1, -1.1], [1.1, 1.1], [-1.1, 1.1], [1.1, -1.1]]) {
-          ctx.fillText(this.ch, dx, dy);
-        }
-        ctx.fillStyle = "rgba(23,75,255,0.42)";
-        ctx.fillText(this.ch, 0, 0);
-        ctx.restore();
-      }
-    }
-
-    let bubbles: Bubble[] = [];
-    let specks: Speck[] = [];
-    let chars: FloatChar[] = [];
-    let titles: TitleLetter[] = [];
-
-    function init(elapsed = 0) {
-      resize();
-      bubbles = SCRIPT.map((item, index) => new Bubble(item, index));
-      specks = Array.from({ length: Math.max(8, Math.floor(W * H / 12000)) }, () => new Speck(true));
-      chars = [];
-      charsSpawnedFor.clear();
-      titles = [];
-      titleFontSize = Math.max(54, Math.min(96, W * 0.22));
-      ctx.font = `italic 400 ${titleFontSize}px ${FONT_SERIF}`;
-      const word = "float";
-      const widths = [...word].map((c) => ctx.measureText(c).width);
-      const spacing = titleFontSize * 0.04;
-      let total = widths.reduce((sum, width) => sum + width, 0) + spacing * (word.length - 1);
-      let xc = W / 2 - total / 2;
-      const titleY = H * 0.5;
-      for (let i = 0; i < word.length; i++) {
-        titles.push(new TitleLetter(word[i], xc + widths[i] / 2, titleY, i, titleFontSize));
-        xc += widths[i] + spacing;
-      }
-      startTime = performance.now() - elapsed;
-    }
-
-    function getElapsed() {
-      return startTime > 0 ? Math.max(0, performance.now() - startTime) : 0;
-    }
-
-    function spawnCharsFromBubble(b: Bubble) {
-      if (charsSpawnedFor.has(b)) return;
-      charsSpawnedFor.add(b);
-      const cy = b.ay + b.h / 2 + b.driftY;
-      ctx.font = `300 ${b.fontSize}px ${FONT_UI}`;
-      let cursor = b.ax + b.w / 2 - b.textW / 2 + b.driftX;
-      for (const ch of b.text) {
-        const cw = ctx.measureText(ch).width;
-        if (ch !== " ") chars.push(new FloatChar(ch, cursor + cw / 2, cy, b.detachColor, b.fontSize));
-        cursor += cw;
-      }
-      b.charsOut = true;
-    }
-
-    function frame(now: number) {
-      if (!isAnimating || document.visibilityState === "hidden") return;
-      const t = now - startTime;
-      ctx.fillStyle = PAPER;
-      ctx.fillRect(0, 0, W, H);
-      const grad = ctx.createRadialGradient(W / 2, H * 0.45, 0, W / 2, H * 0.45, Math.max(W, H) * 0.75);
-      grad.addColorStop(0, "rgba(23,75,255,0)");
-      grad.addColorStop(1, "rgba(23,75,255,0.08)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
-      specks.forEach((s) => { s.update(); s.draw(); });
-      const visibleCount = SCRIPT.reduce((count, item) => count + (t >= item.start ? 1 : 0), 0);
-      bubbles.forEach((b) => b.update(t, visibleCount));
-      if (t > T.detach) bubbles.forEach((b, i) => { if (t > T.detach + i * 90) spawnCharsFromBubble(b); });
-      bubbles.forEach((b) => b.draw(t));
-      chars.forEach((c) => { c.update(); c.draw(); });
-      titles.forEach((tl) => { tl.update(t); tl.draw(); });
-      if (t > T.tagline) {
-        const op = clamp((t - T.tagline) / 900, 0, 0.7);
-        const txt = "WEIGHTLESS  ·  AI";
-        const ls = 2.2;
-        ctx.fillStyle = `rgba(23,75,255,${op})`;
-        ctx.font = `300 10px ${FONT_MONO}`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const ws = [...txt].map((c) => ctx.measureText(c).width);
-        let totalW = ws.reduce((sum, width) => sum + width + ls, 0) - ls;
-        let xx = W / 2 - totalW / 2;
-        for (let i = 0; i < txt.length; i++) {
-          ctx.fillText(txt[i], xx + ws[i] / 2, H * 0.5 + titleFontSize * 0.55);
-          xx += ws[i] + ls;
-        }
-      }
-      raf = requestAnimationFrame(frame);
-    }
-
-    function stopAnimation() {
-      isAnimating = false;
-      cancelAnimationFrame(raf);
-    }
-
-    function startAnimation(elapsed = 0) {
-      stopAnimation();
-      init(elapsed);
-      isAnimating = true;
-      frame(performance.now());
-    }
-
-    const onResize = () => {
-      window.clearTimeout(resizeTimer);
-      const elapsed = isAnimating ? getElapsed() : pausedElapsed;
-      resizeTimer = window.setTimeout(() => startAnimation(elapsed), 120);
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        pausedElapsed = getElapsed();
-        stopAnimation();
-        return;
-      }
-      startAnimation(pausedElapsed);
-    };
-    const onPageShow = () => startAnimation(isAnimating ? getElapsed() : pausedElapsed);
-
-    startAnimation(0);
-    window.addEventListener("resize", onResize);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pageshow", onPageShow);
-    return () => {
-      stopAnimation();
-      window.clearTimeout(resizeTimer);
-      window.removeEventListener("resize", onResize);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pageshow", onPageShow);
-    };
-  }, []);
+  const dots = useMemo(buildDots, []);
 
   return (
-    <div ref={stageRef} className="splash-animation-stage" aria-hidden>
-      <canvas ref={canvasRef} className="splash-animation-canvas" />
-      <div className="splash-animation-grain" />
-      <div className="splash-animation-corner">float / 0.1</div>
-      <div className="splash-animation-corner splash-animation-corner-right">no.001</div>
+    <div className="splash-animation-stage" aria-hidden>
+      {/* 四角套准记号 —— 纯黑底上唯一的背景元素 */}
+      <div className="splash-reg splash-reg-tl" />
+      <div className="splash-reg splash-reg-tr" />
+      <div className="splash-reg splash-reg-bl" />
+      <div className="splash-reg splash-reg-br" />
+
+      <div className="splash-dot-stage">
+        {/* 每颗点从外侧飘进来落到位;核先聚拢,七条轨道随后依次绕着铺开 */}
+        <svg className="splash-dot-chart" viewBox={`0 0 ${VB} ${VB}`}>
+          {dots.map((p, i) => (
+            <circle
+              key={i}
+              className="splash-dot"
+              cx={p.x}
+              cy={p.y}
+              r={p.r}
+              style={{
+                "--o": p.o.toFixed(2),
+                "--dx": `${p.dx.toFixed(2)}px`,
+                "--dy": `${p.dy.toFixed(2)}px`,
+                "--m1x": `${p.m1x.toFixed(2)}px`,
+                "--m1y": `${p.m1y.toFixed(2)}px`,
+                "--m2x": `${p.m2x.toFixed(2)}px`,
+                "--m2y": `${p.m2y.toFixed(2)}px`,
+                "--delay": `${p.d.toFixed(2)}s`,
+              } as CSSProperties}
+            />
+          ))}
+        </svg>
+
+        <div className="splash-wordmark"><b><i>67</i>phone</b></div>
+      </div>
     </div>
   );
 }

@@ -70,7 +70,7 @@ a {
 
 .splash-phone-screen {
   padding: 0;
-  background: #F1F2F6;
+  background: #000;
 }
 
 .splash-phone-screen::before {
@@ -90,9 +90,9 @@ a {
   padding: 0;
   border: none;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(23, 75, 255, 0.66);
-  box-shadow: 0 4px 10px rgba(23, 75, 255, 0.035);
+  background: rgba(244, 244, 245, 0.1);
+  color: rgba(244, 244, 245, 0.88);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(12px);
   cursor: pointer;
   opacity: 0;
@@ -118,54 +118,140 @@ a {
   transform: translateX(-50%) scale(0.96);
 }
 
-.splash-animation-stage,
-.splash-animation-canvas {
-  display: block;
-}
+/* ══════════════ 开屏:点刻风星图 ══════════════
+   点位与轨道的生成逻辑见 components/splash-animation.tsx */
 
 .splash-animation-stage {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
   overflow: hidden;
-  background: #F1F2F6;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  background: #000;
+  color: #f4f4f5;
   -webkit-font-smoothing: antialiased;
 }
 
-.splash-animation-canvas {
+/* ---------- 四角套准记号 ---------- */
+.splash-reg {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
   z-index: 1;
-}
-
-.splash-animation-grain {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
+  width: 26px;
+  height: 26px;
+  opacity: 0;
   pointer-events: none;
-  mix-blend-mode: multiply;
-  opacity: 0.4;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  animation: splash-reg-fade 0.8s var(--ease-out) 0.25s both;
 }
 
-.splash-animation-corner {
+.splash-reg::before,
+.splash-reg::after {
+  content: "";
   position: absolute;
-  top: 54px;
-  left: 18px;
-  z-index: 4;
-  color: rgba(0, 38, 224, 0.5);
-  font: 300 calc(9px*var(--app-text-scale,1))/1 "JetBrains Mono", ui-monospace, monospace;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  pointer-events: none;
-  user-select: none;
+  background: rgba(244, 244, 245, 0.28);
 }
 
-.splash-animation-corner-right {
-  right: 18px;
-  left: auto;
+.splash-reg::before { width: 100%; height: 1px; top: 0; }
+.splash-reg::after { width: 1px; height: 100%; left: 0; }
+
+.splash-reg-tl { top: 26px; left: 26px; }
+.splash-reg-tr { top: 26px; right: 26px; transform: scaleX(-1); }
+.splash-reg-bl { bottom: 26px; left: 26px; transform: scaleY(-1); }
+.splash-reg-br { bottom: 26px; right: 26px; transform: scale(-1); }
+
+/* ---------- 星图 + 字标 ---------- */
+.splash-dot-stage {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: splash-stage-rise 0.7s var(--ease-out) both;
+}
+
+/* 尺寸不用百分比:父级是内容撑开的 flex 列,百分比会解析不出来。
+   用 vw 兜窄屏,桌面上 min() 取 226px。 */
+.splash-dot-chart {
+  display: block;
+  width: min(226px, 62vw);
+  height: min(226px, 62vw);
+  overflow: visible;
+}
+
+/* 每颗点:从 (--dx,--dy) 那个外侧起点飘回原位。
+   both 填充是关键 —— 延迟未到时它停在 opacity:0 的起始态,静止不重绘,
+   所以一千五百多颗点也只有正在飞的那几十颗有开销。
+   缓动只在末尾收一下,前段接近匀速,划出来的弧才是滑的。 */
+.splash-dot {
+  fill: #f4f4f5;
+  animation: splash-gather 0.75s cubic-bezier(0.28, 0.48, 0.26, 1) var(--delay) both;
+}
+
+/*
+ * 落定后的亮度由 --o 传进来 —— 写在关键帧里,而不是元素的 opacity 上,
+ * 否则 both 填充会把它压回动画的起始值。
+ *
+ * 38% / 70% 两帧只给 transform:它们是螺旋路径上的采样点。只放一个中间点
+ * 的话,轨迹是两段直线折出的钝角,速度在拐点会顿一下;两个点才拟合得出
+ * 平滑的弧。22% 那一帧只给 opacity:点在飞行前段就现身,看得见它飘过来。
+ */
+@keyframes splash-gather {
+  0% { opacity: 0; transform: translate(var(--dx), var(--dy)); }
+  22% { opacity: var(--o); }
+  38% { transform: translate(var(--m1x), var(--m1y)); }
+  70% { transform: translate(var(--m2x), var(--m2y)); }
+  100% { opacity: var(--o); transform: translate(0, 0); }
+}
+
+/* ---------- 字标 ----------
+ * 极细、大字距的排布:细字配细线,靠字距而不是字重占住版面。
+ * 「67」略重一档,和「phone」拉开一点层次,免得整行平得没有重心。 */
+.splash-wordmark {
+  margin-top: 34px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.splash-wordmark b {
+  display: block;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-size: calc(21px * var(--app-text-scale, 1));
+  font-weight: 200;
+  color: rgba(244, 244, 245, 0.92);
+  /* 末字的字距会把整行推左,补一个等量缩进拉回真正的居中 */
+  text-indent: 10px;
+  /* 等星图基本成形再浮出来,不跟点抢注意力 */
+  animation: splash-word-in 1.5s cubic-bezier(0.2, 0.66, 0.24, 1) 7.2s both;
+}
+
+.splash-wordmark i {
+  font-style: normal;
+  font-weight: 400;
+}
+
+/* 字距从紧到松地展开 —— 比单纯淡入考究,像标题被慢慢拉开 */
+@keyframes splash-word-in {
+  from { opacity: 0; letter-spacing: 2px; }
+  to { opacity: 1; letter-spacing: 10px; }
+}
+
+@keyframes splash-stage-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-reg-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-dot-stage,
+  .splash-wordmark b,
+  .splash-reg,
+  .splash-dot {
+    animation-duration: 0.01ms !important;
+  }
 }
 
 /* ── Scaled text utilities (replace Tailwind text-[Npx]) ── */
