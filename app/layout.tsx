@@ -34,7 +34,10 @@ export default function RootLayout({
     <html lang="zh-CN" className="booting">
       <head>
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
-        <meta name="theme-color" content="#f8f7f2" />
+        {/* iOS 从桌面启动 PWA 时，网页画出来之前先铺一张启动屏，底色取自这里。
+            原值 #f8f7f2 近乎白色 —— 那就是冷启动时「白很久」的真身，而且和
+            manifest 里的 theme_color: #000000 自相矛盾。统一成黑，和开屏星图接上。 */}
+        <meta name="theme-color" content="#000000" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
         <link rel="icon" href="/icon-192.png" type="image/png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

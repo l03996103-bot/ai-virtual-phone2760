@@ -30,8 +30,21 @@ body {
  * 水合完成后由 BootBackgroundRelease 摘掉，见该组件的注释。
  */
 @media (max-width: 500px) and (hover: none) and (pointer: coarse) {
+  /*
+   * 两层兜底，各管一段，中间不留缝：
+   *
+   * booting  —— 管「文档还没解析到 <body>」那一小段。类写在 <html> 标签上，
+   *             浏览器读到第一行就知道背景是黑的。水合后即摘。
+   * :has()   —— 管整个开屏期间。开屏层一在 DOM 里它就成立，开屏一卸载它就
+   *             失效，不需要任何 JS 参与。
+   *
+   * 之前只有 booting、且在水合时就摘掉，而那会儿动画还在跑 —— 一摘掉 body
+   * 就恢复浅色，安全区和重绘间隙立刻漏白。这就是动画中途那些白帧。
+   */
   html.booting,
-  html.booting body {
+  html.booting body,
+  html:has(.splash-root),
+  html:has(.splash-root) body {
     background: #000;
   }
 }
@@ -197,6 +210,23 @@ a {
 @keyframes splash-stage-rise {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/*
+ * 全部动画默认停在起始帧（都带 both 填充，所以停住时是 opacity:0，一片黑）。
+ * SplashAnimation 挂载、且页面确实可见之后才挂 data-playing 放行 —— 原因见
+ * 该组件里的注释：靠首帧自然开跑的话，动画会在 iOS 的启动屏后面空转掉几秒。
+ */
+.splash-dot-stage,
+.splash-dot,
+.splash-wordmark b {
+  animation-play-state: paused;
+}
+
+.splash-animation-stage[data-playing="true"] .splash-dot-stage,
+.splash-animation-stage[data-playing="true"] .splash-dot,
+.splash-animation-stage[data-playing="true"] .splash-wordmark b {
+  animation-play-state: running;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 /*
  * 开屏动画 —— 点刻风星图。
@@ -207,11 +207,63 @@ function buildDots(): Dot[] {
   return out;
 }
 
-export function SplashAnimation() {
+export function SplashAnimation({ onFinished }: { onFinished?: () => void }) {
   const dots = useMemo(buildDots, []);
+  const [playing, setPlaying] = useState(false);
+
+  /*
+   * 动画不能靠首帧绘制自然开跑。
+   *
+   * 星图的标记是服务端渲染的，CSS 动画会在首帧就启动 —— 而 iOS 从桌面启动
+   * PWA 时，网页画好之后启动屏还盖在上面。等它撤掉，动画已经跑掉好几秒，
+   * 用户看到的是后半段，表现为「动画没播完就进桌面了」。
+   *
+   * 所以默认让所有动画停在起始帧（CSS 里 animation-play-state: paused），
+   * 等挂载完、且页面确实可见了，再统一放行。计时器也从这一刻起算，
+   * 于是无论加载多慢，看到的永远是完整的一遍。
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let raf = 0;
+
+    const start = () => {
+      if (cancelled) return;
+      // 等一帧，确保暂停态已经上屏，放行时是从头开始而不是跳帧
+      raf = requestAnimationFrame(() => {
+        if (!cancelled) setPlaying(true);
+      });
+    };
+
+    if (document.visibilityState === "visible") {
+      start();
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(raf);
+      };
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", onVisible);
+      start();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  // 计时与动画同一刻起算，两者永远对齐
+  useEffect(() => {
+    if (!playing || !onFinished) return;
+    const timer = setTimeout(onFinished, SPLASH_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [playing, onFinished]);
 
   return (
-    <div className="splash-animation-stage" aria-hidden>
+    <div className="splash-animation-stage" data-playing={playing ? "true" : "false"} aria-hidden>
       <div className="splash-dot-stage">
         {/* 每颗点从外侧飘进来落到位;核先聚拢,七条轨道随后依次绕着铺开 */}
         <svg className="splash-dot-chart" viewBox={`0 0 ${VB} ${VB}`}>
