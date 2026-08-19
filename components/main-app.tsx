@@ -6,7 +6,7 @@ import { AccountGate } from "@/components/auth/account-gate";
 import { CloudBackupScheduler } from "@/components/cloud-backup-scheduler";
 import { MediaMaintenanceScheduler } from "@/components/media-maintenance-scheduler";
 import { DesktopShell } from "./desktop-shell";
-import { SplashAnimation } from "./splash-animation";
+import { SplashAnimation, SPLASH_WATCHDOG_MS } from "./splash-animation";
 import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
@@ -227,6 +227,13 @@ export function MainApp() {
    */
   const handleAnimationFinished = useCallback(() => setAnimationDone(true), []);
 
+  // 无条件的退路，理由见 SPLASH_WATCHDOG_MS 的注释。正常路径下动画早就报完了，
+  // 这个定时器只是被 clear 掉，不产生任何影响。
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimationDone(true), SPLASH_WATCHDOG_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
   /*
    * 进桌面要两个条件同时成立：动画放完，且数据就绪。
    * hydrated 这道闸门不能省 —— 角色卡、聊天记录都在 IndexedDB 里，
@@ -236,6 +243,15 @@ export function MainApp() {
   useEffect(() => {
     if (hydrated && animationDone) setSplashDismissed(true);
   }, [hydrated, animationDone]);
+
+  /*
+   * 开屏结束才摘黑底兜底。摘早了（比如水合时就摘）动画还在跑，body 恢复
+   * 浅色，安全区和重绘间隙会漏出白帧。
+   */
+  useEffect(() => {
+    if (!splashDismissed) return;
+    document.documentElement.classList.remove("booting");
+  }, [splashDismissed]);
 
   useEffect(() => {
     let cancelled = false;

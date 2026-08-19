@@ -31,20 +31,18 @@ body {
  */
 @media (max-width: 500px) and (hover: none) and (pointer: coarse) {
   /*
-   * 两层兜底，各管一段，中间不留缝：
+   * 开屏全程的黑底兜底。类写在 <html> 标签上，浏览器读到文档第一行就知道
+   * 背景是黑的 —— 比等 <body> 里的开屏标记早，冷启动那两帧白因此没了。
+   * 一直留到开屏真正结束才由 MainApp 摘掉，中途不摘：动画还在跑的时候摘，
+   * body 会恢复浅色，安全区和重绘间隙立刻漏白。
    *
-   * booting  —— 管「文档还没解析到 <body>」那一小段。类写在 <html> 标签上，
-   *             浏览器读到第一行就知道背景是黑的。水合后即摘。
-   * :has()   —— 管整个开屏期间。开屏层一在 DOM 里它就成立，开屏一卸载它就
-   *             失效，不需要任何 JS 参与。
-   *
-   * 之前只有 booting、且在水合时就摘掉，而那会儿动画还在跑 —— 一摘掉 body
-   * 就恢复浅色，安全区和重绘间隙立刻漏白。这就是动画中途那些白帧。
+   * 这里曾经用过 html:has(.splash-root)，看着优雅（不需要 JS、跟着开屏层
+   * 自动生死），实测是灾难：:has() 挂在 html 上会让浏览器在每次 DOM 变动时
+   * 重新求值整棵树，而开屏有 1569 个 SVG 元素、随后还要挂载整个桌面 ——
+   * 主线程被锁死，页面停在白屏再也进不去。别再加回来。
    */
   html.booting,
-  html.booting body,
-  html:has(.splash-root),
-  html:has(.splash-root) body {
+  html.booting body {
     background: #000;
   }
 }

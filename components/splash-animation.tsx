@@ -25,6 +25,14 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
  */
 export const SPLASH_DURATION_MS = 8700;
 
+/*
+ * 看门狗时限。动画的放行依赖 requestAnimationFrame 和 visibilitychange，
+ * 计时依赖 setTimeout —— 任何一环在某个浏览器/某种后台恢复路径下没走通，
+ * 用户就永远卡在开屏出不去。那是最坏的结果，所以给一条无条件的退路：
+ * 从挂载起算超过这个时间，不管动画到哪了都放人进桌面。
+ */
+export const SPLASH_WATCHDOG_MS = SPLASH_DURATION_MS + 5000;
+
 const VB = 240; /* viewBox 尺寸,中心 120,120 */
 const C = VB / 2;
 
