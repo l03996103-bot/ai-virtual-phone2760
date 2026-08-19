@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+import { BootBackgroundRelease } from "@/components/boot-background-release";
 import { ChatPluginBootstrap } from "@/components/chat-plugin-bootstrap";
 import { ChatReasoningVisibilityController } from "@/components/chat-reasoning-visibility-controller";
 import { CSSImportEnhancer } from "@/components/css-import-enhancer";
@@ -22,13 +23,15 @@ export const metadata: Metadata = {
   description: "AI 虚拟互动手机",
 };
 
+// <html> 上的 booting 类让首帧就是黑的，盖住 PWA 冷启动时那两帧浅色
+// （规则见 styles/base.css）；水合后由 BootBackgroundRelease 摘掉。
 export default function RootLayout({
   children
 }: Readonly<{
   children: ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" className="booting">
       <head>
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
         <meta name="theme-color" content="#f8f7f2" />
@@ -40,6 +43,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body>
+        <BootBackgroundRelease />
         <PWAManifestInjector />
         <PWARegistrar />
         <CSSImportEnhancer />

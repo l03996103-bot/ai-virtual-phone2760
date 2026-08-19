@@ -16,6 +16,26 @@ body {
   touch-action: pan-x pan-y;
 }
 
+/*
+ * 开屏前的兜底底色，只管移动端 —— 白闪是 PWA 冷启动才有的毛病。
+ *
+ * SSR 输出的 <html> 自带 booting 类，浏览器读到文档第一行就知道背景是黑的。
+ * 没有它的话：浏览器解析完 <head> 的样式就开始画，此时 <body> 里的开屏标记
+ * 还没到，于是 body 的浅色（移动端是 --c-page-body-bg）先铺满整屏，等黑色
+ * 开屏渲染出来已经过去两帧 —— 那就是录屏里看到的白闪。
+ *
+ * 条件跟着 phone-shell.css 那条移动端媒体查询走，保持一致。桌面态不加这层：
+ * 那边开屏本来就是浅色页面配黑屏手机，铺黑反而会闪出一块突兀的黑。
+ *
+ * 水合完成后由 BootBackgroundRelease 摘掉，见该组件的注释。
+ */
+@media (max-width: 500px) and (hover: none) and (pointer: coarse) {
+  html.booting,
+  html.booting body {
+    background: #000;
+  }
+}
+
 body {
   color: var(--c-text-title);
   background: var(--c-input);
@@ -56,10 +76,14 @@ a {
   color: #9a8a7a;
 }
 
+/*
+ * 桌面态：开屏页和普通页面一样是浅色底，中间摆一台黑屏手机。
+ * 移动态另有一条规则把它整个铺黑，见 phone-shell.css 的移动端媒体查询。
+ *
+ * 尺寸不再重复声明 —— 原本这里抄了一遍 width/margin/padding，值和 .app-root
+ * 完全相同，纯属冗余。
+ */
 .app-root.splash-root {
-  width: min(1120px, 92vw);
-  margin: 0 auto;
-  padding: 24px 0 40px;
   background: var(--c-input);
 }
 

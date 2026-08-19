@@ -1161,7 +1161,9 @@
     align-items: flex-start;
     justify-content: flex-start;
     overflow: hidden;
-    background: var(--c-page-body-bg);
+    /* 开屏是黑底星图。这里原本用 --c-page-body-bg（浅灰）：手机壳受缩放和
+       状态栏偏移影响铺不满这一层，底部会露出一条浅灰边。改黑之后露不露都看不见。 */
+    background: #000;
   }
 
   .splash-shell-wrap {
