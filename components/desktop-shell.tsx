@@ -152,6 +152,18 @@ type DragPageKey = DesktopPageKey | typeof DOCK_PAGE_KEY;
 const SWIPE_THRESHOLD_RATIO = 0.2;
 const SWIPE_MIN_THRESHOLD = 60;
 
+/*
+ * 拖到另一个图标上、要悬停多久才算「成组」。
+ *
+ * 原值 180ms 太短，等于碰到就算，蹭一下就建文件夹。iOS 的手感在 0.6~1 秒，
+ * 而且悬停期间目标会肉眼可见地慢慢张开，让人知道「再停一下就成组、现在挪开
+ * 还来得及」。这里取 650ms，配合 .icon-item.merge-charging 的蓄力动画。
+ *
+ * 动画时长通过 --merge-hold 传给 CSS（挂在 .icon-grid 上），改这一个数
+ * 两边同时生效，不会走神。
+ */
+const MERGE_HOLD_MS = 650;
+
 function parseColorAlpha(value: string): { hex: string; alpha: number } {
   const rgbaMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/);
   if (rgbaMatch) {
@@ -1061,6 +1073,9 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [folderPageIndex, setFolderPageIndex] = useState(0);
   // 拖拽悬停到某图标中心足够久 → 该图标高亮为“松手成组”目标
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
+  // 蓄力中的目标：已判定为「成组」意图、但悬停还没满 MERGE_HOLD_MS。
+  // 和 mergeTargetId 分开，是为了让「正在蓄力」和「已武装」有各自的视觉。
+  const [mergeCandidateId, setMergeCandidateId] = useState<string | null>(null);
   const [desktopReady, setDesktopReady] = useState(false);
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -2668,7 +2683,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
   /** 取消“成组”意图：停表 + 熄灭高亮 + 解除武装 */
   function clearMergeIntent(drag: NonNullable<typeof editDragRef.current>) {
     if (drag.mergeTimer) { clearTimeout(drag.mergeTimer); drag.mergeTimer = null; }
-    if (drag.mergeTargetIconId) setMergeTargetId(null);
+    if (drag.mergeTargetIconId) { setMergeTargetId(null); setMergeCandidateId(null); }
     drag.mergeArmed = false;
     drag.mergeTargetIconId = null;
     drag.mergeTargetPage = null;
@@ -2764,14 +2779,17 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
           drag.targetPage = null;
           drag.lastTargetKey = `merge:${pageKey}:${targetId}`;
           setDropTarget(null);
+          // 先进入蓄力态：目标缓缓张开，告诉用户「再停一下就成组，现在挪开还来得及」
+          setMergeCandidateId(targetId);
           drag.mergeTimer = setTimeout(() => {
             const live = editDragRef.current;
             if (live !== drag || !drag.active || drag.mergeTargetIconId !== targetId) return;
             drag.mergeTimer = null;
             drag.mergeArmed = true;
+            setMergeCandidateId(null);
             setMergeTargetId(targetId);
             try { navigator.vibrate?.(10); } catch { /* 不支持就算了 */ }
-          }, 180);
+          }, MERGE_HOLD_MS);
           return;
         }
         // 换位：目标锁定为对方的格子
@@ -3142,7 +3160,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       }, 0);
     }
     if (drag.mergeTimer) clearTimeout(drag.mergeTimer);
-    if (drag.mergeTargetIconId) setMergeTargetId(null);
+    if (drag.mergeTargetIconId) { setMergeTargetId(null); setMergeCandidateId(null); }
 
     // Cleanup drag
     if (drag.edgeTimer) clearTimeout(drag.edgeTimer);
@@ -4352,15 +4370,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                             }}
                             className={`icon-grid icon-grid-explicit icon-grid-${pageKey}`}
                             aria-label={pageIndex === 0 ? TEXT.ariaDesktopIcons : undefined}
-                            style={
-                              slotIconWidth || slotIconHeight || slotRowStep
-                                ? ({
-                                  ...(slotIconWidth ? { "--slot-icon-width": `${slotIconWidth}px` } : {}),
-                                  ...(slotIconHeight ? { "--slot-icon-height": `${slotIconHeight}px` } : {}),
-                                  ...(slotRowStep ? { "--slot-row-step": `${slotRowStep}px` } : {})
-                                } as CSSProperties)
-                                : undefined
-                            }
+                            style={({
+                              // 蓄力动画的时长跟着 MERGE_HOLD_MS 走，CSS 里不再写死秒数
+                              "--merge-hold": `${MERGE_HOLD_MS}ms`,
+                              ...(slotIconWidth ? { "--slot-icon-width": `${slotIconWidth}px` } : {}),
+                              ...(slotIconHeight ? { "--slot-icon-height": `${slotIconHeight}px` } : {}),
+                              ...(slotRowStep ? { "--slot-row-step": `${slotRowStep}px` } : {})
+                            } as CSSProperties)}
                           >
                             {/* Render widgets for this page */}
                             {pageWidgets.map((widget) => {
@@ -4428,7 +4444,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                               if (!pos) return null;
                               const isDragging = dragItem?.type === "icon" && dragItem.id === iconId;
                               const isMergeTarget = mergeTargetId === iconId;
-                              const itemClass = `icon-item${isDragging ? " dragging" : ""}${isMergeTarget ? " merge-target" : ""}`;
+                              const isMergeCharging = mergeCandidateId === iconId;
+                              const itemClass = `icon-item${isDragging ? " dragging" : ""}${isMergeTarget ? " merge-target" : ""}${isMergeCharging ? " merge-charging" : ""}`;
                               if (isFolderIconId(iconId)) {
                                 const folder = folders[iconId];
                                 if (!folder) return null;

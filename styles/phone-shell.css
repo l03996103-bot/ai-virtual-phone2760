@@ -1248,6 +1248,31 @@
   color: var(--c-desktop-icon, #2f343b);
 }
 
+/* 拖拽悬停·蓄力中：判定为「成组」意图，但悬停还没满 MERGE_HOLD_MS。
+   目标缓缓张开，让人看得出「再停一下就成组、现在挪开还来得及」——
+   iOS 的关键手感就在这段可反悔的过渡上，少了它就成了碰一下就建文件夹。
+   时长由 --merge-hold 传入（见 desktop-shell.tsx 的 MERGE_HOLD_MS）。 */
+.icon-item.merge-charging .icon-glyph-box {
+  animation: icon-merge-charge var(--merge-hold, 650ms) cubic-bezier(0.32, 0.06, 0.4, 1) both;
+}
+
+@keyframes icon-merge-charge {
+  from {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-desktop-icon, #ffffff) 0%, transparent);
+  }
+  to {
+    transform: scale(1.1);
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--c-desktop-icon, #ffffff) 42%, transparent),
+      0 5px 18px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.edit-mode .icon-item.merge-charging {
+  animation: none; /* 蓄力时停掉抖动，张开的过程才看得清 */
+}
+
 /* 拖拽悬停：即将合并成组的目标高亮（松手入组） */
 .icon-item.merge-target .icon-glyph-box {
   transform: scale(1.16);
