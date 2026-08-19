@@ -29,22 +29,26 @@ body {
  *
  * 水合完成后由 BootBackgroundRelease 摘掉，见该组件的注释。
  */
-@media (max-width: 500px) and (hover: none) and (pointer: coarse) {
-  /*
-   * 开屏全程的黑底兜底。类写在 <html> 标签上，浏览器读到文档第一行就知道
-   * 背景是黑的 —— 比等 <body> 里的开屏标记早，冷启动那两帧白因此没了。
-   * 一直留到开屏真正结束才由 MainApp 摘掉，中途不摘：动画还在跑的时候摘，
-   * body 会恢复浅色，安全区和重绘间隙立刻漏白。
-   *
-   * 这里曾经用过 html:has(.splash-root)，看着优雅（不需要 JS、跟着开屏层
-   * 自动生死），实测是灾难：:has() 挂在 html 上会让浏览器在每次 DOM 变动时
-   * 重新求值整棵树，而开屏有 1569 个 SVG 元素、随后还要挂载整个桌面 ——
-   * 主线程被锁死，页面停在白屏再也进不去。别再加回来。
-   */
-  html.booting,
-  html.booting body {
-    background: #000;
-  }
+/*
+ * 开屏全程的黑底兜底。类写在 <html> 标签上，浏览器读到文档第一行就知道
+ * 背景是黑的 —— 比等 <body> 里的开屏标记早，冷启动那两帧白因此没了。
+ * 一直留到开屏真正结束才由 MainApp 摘掉，中途不摘：动画还在跑的时候摘，
+ * body 会恢复浅色，安全区和重绘间隙立刻漏白。
+ *
+ * 不进媒体查询。这条以前包在 (max-width:500px) and (hover:none) and
+ * (pointer:coarse) 里，于是开屏是不是黑的，取决于那个媒体查询有没有成立 ——
+ * 只要有一帧没匹配上，黑底连同移动端把机身设成 transparent 的规则一起失效，
+ * .phone-case 那片金属灰渐变就会满屏铺开。那就是黑屏之后闪的那一下灰。
+ * 开屏本来就该是黑的，和视口宽窄、指针类型都没关系，不该有这个依赖。
+ *
+ * 这里也曾用过 html:has(.splash-root)，看着优雅（不需要 JS、跟着开屏层自动
+ * 生死），实测是灾难：:has() 挂在 html 上会让浏览器在每次 DOM 变动时重新
+ * 求值整棵树，而开屏有 1569 个 SVG 元素、随后还要挂载整个桌面 —— 主线程
+ * 被锁死，页面停在白屏再也进不去。别再加回来。
+ */
+html.booting,
+html.booting body {
+  background: #000;
 }
 
 body {
@@ -88,14 +92,39 @@ a {
 }
 
 /*
- * 桌面态：开屏页和普通页面一样是浅色底，中间摆一台黑屏手机。
- * 移动态另有一条规则把它整个铺黑，见 phone-shell.css 的移动端媒体查询。
+ * 开屏页一律黑底，不分设备。原来这里是浅色、靠 phone-shell.css 的移动端
+ * 媒体查询覆盖成黑 —— 媒体查询有任何一帧没成立就露浅色，成本远大于
+ * 「宽屏下开屏页也是黑的」这点观感差异。
  *
  * 尺寸不再重复声明 —— 原本这里抄了一遍 width/margin/padding，值和 .app-root
  * 完全相同，纯属冗余。
  */
 .app-root.splash-root {
-  background: var(--c-input);
+  background: #000;
+}
+
+/*
+ * 开屏期间的机身外壳一律按黑处理。
+ *
+ * .phone-case 默认是一整片金属灰渐变（#a8adb2 → #565c64 → #9aa0a6 …），
+ * 平时靠移动端媒体查询设成 transparent 才看不见。但它是开屏层里唯一一个
+ * 自带浅色的元素，只要那个媒体查询有一帧没生效，它就满屏铺开 —— 黑屏之后
+ * 闪的那一下灰就是它。开屏本来也不该看到机身，在这里无条件断掉。
+ * 只作用于 .splash-shell-wrap，桌面上真正的手机外壳不受影响。
+ */
+.splash-shell-wrap .phone-case,
+.splash-shell-wrap .phone-frame {
+  background: #000;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 机身的伪元素是侧键和高光条，同样只有移动端媒体查询在藏它们 */
+.splash-shell-wrap .phone-case::before,
+.splash-shell-wrap .phone-case::after,
+.splash-shell-wrap .phone-frame::before,
+.splash-shell-wrap .phone-frame::after {
+  display: none;
 }
 
 .splash-shell-wrap {
